@@ -37,13 +37,13 @@ type Value = Text
 
 data Node = Node
   { nodeProperties :: Properties
-  }
+  } deriving (Show)
 
 data Relation = Relation
-  { nodeA :: Id Node
-  , nodeB :: Id Node
+  { nodeA              :: Id Node
+  , nodeB              :: Id Node
   , relationProperties :: Properties
-  }
+  } deriving (Show)
 
 type Id a = Int
 
@@ -56,7 +56,7 @@ data Db = Db
   , nodeseq     :: Int              -- ^ next available node id
   , relationseq :: Int              -- ^ next available relation id
   , versionseq  :: Int              -- ^ next available version number
-  }
+  } deriving (Show)
 
 emptyDb :: Db
 emptyDb = Db mempty mempty (IntMap.singleton 0 emptyVersion) 0 0 1
@@ -68,10 +68,9 @@ versionDb :: Db -> Int -> Version
 versionDb Db{..} vid = IntMap.findWithDefault (error "No such version") vid versions
 
 data View = View
-  { viewNodes       :: IntMap Node      -- ^ map from node id to node
-  , viewRelations   :: IntMap Relation  -- ^ map from relation id to relation
-  }
-
+  { viewNodes     :: IntMap Node      -- ^ map from node id to node
+  , viewRelations :: IntMap Relation  -- ^ map from relation id to relation
+  } deriving (Show)
 
 viewDb :: Db -> Int -> View
 viewDb db vid =
@@ -99,7 +98,7 @@ data ChangeSet = ChangeSet
   , nodesDeleted     :: IntSet
   , relationsAdded   :: IntSet
   , relationsDeleted :: IntSet
-  }
+  } deriving (Show)
 
 emptyChangeSet :: ChangeSet
 emptyChangeSet = ChangeSet
@@ -128,7 +127,7 @@ instance Monoid ChangeSet where
 data Version = Version
   { selectedNodes     :: IntSet
   , selectedRelations :: IntSet
-  }
+  } deriving (Show)
 
 emptyVersion :: Version
 emptyVersion = Version mempty mempty
