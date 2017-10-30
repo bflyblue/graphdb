@@ -3,10 +3,11 @@
 module Lib
     ( Db(..)
     , View(..)
-    , Connection
+    , Connection(..)
     , Node(..)
     , Relation(..)
     , Properties
+    , connect
     , emptyDb
     , viewDb
     , transaction
@@ -133,6 +134,9 @@ emptyVersion :: Version
 emptyVersion = Version mempty mempty
 
 --
+
+connect :: Db -> IO Connection
+connect db = Connection <$> newTVarIO db
 
 transaction :: Connection -> (Transaction -> STM a) -> IO a
 transaction conn act = do
