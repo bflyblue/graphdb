@@ -36,7 +36,6 @@ import qualified Data.IntMap.Strict     as IntMap
 import           Data.IntSet            (IntSet)
 import qualified Data.IntSet            as IntSet
 import           Data.List              (sort, sortOn)
-import           Data.Maybe
 import           Data.Monoid
 import           Data.Text              (Text)
 import qualified Data.Text              as Text
@@ -142,7 +141,7 @@ printDb Db{..} = do
     putStrLn $ "  " ++ Text.unpack field ++ ":"
     forM_ (sortOn fst $ HashMap.toList idx) $ \(val, is) ->
       putStrLn $ "   " ++ showValue val ++ ": " ++
-               unwords ( map (\i -> "n" ++ show i) (IntSet.toList is) )
+               unwords ( map (\i -> "r" ++ show i) (IntSet.toList is) )
   putStrLn " ---- Versions ----"
   forM_ (IntMap.toAscList versions) $ \(vid, Version nodeset relset) ->
     putStrLn $ "  v" ++ show vid ++ ": " ++
@@ -249,6 +248,7 @@ indexValue i v = HashMap.singleton v $ IntSet.singleton i
 indexUnion :: PropertyIndexes -> PropertyIndexes -> PropertyIndexes
 indexUnion = HashMap.unionWith (HashMap.unionWith IntSet.union)
 
+{-
 indexDifference :: PropertyIndexes -> PropertyIndexes -> PropertyIndexes
 indexDifference = HashMap.differenceWith diffIndex
   where
@@ -262,6 +262,7 @@ indexDifference = HashMap.differenceWith diffIndex
       in  if IntSet.null is
           then Nothing
           else Just is
+-}
 
 commit :: Transaction -> STM Int
 commit Transaction{..} = do
@@ -318,13 +319,6 @@ addRelation Transaction{..} r = do
 
 deleteNode :: Transaction -> Id Node -> STM ()
 deleteNode Transaction{..} nid = do
-  Db{..} <- readTVar (connDb transConn)
-  let idx = fromMaybe mempty $ do
-              n <- IntMap.lookup nid nodes
-              return $ indexProperties nid (nodeProperties n)
-  writeTVar (connDb transConn)
-    Db { nodeIndex = indexDifference nodeIndex idx
-       , .. }
   ChangeSet{..} <- readTVar transChanges
   writeTVar transChanges
     ChangeSet
@@ -334,13 +328,6 @@ deleteNode Transaction{..} nid = do
 
 deleteRelation :: Transaction -> Id Relation -> STM ()
 deleteRelation Transaction{..} rid = do
-  Db{..} <- readTVar (connDb transConn)
-  let idx = fromMaybe mempty $ do
-              r <- IntMap.lookup rid relations
-              return $ indexProperties rid (relationProperties r)
-  writeTVar (connDb transConn)
-    Db { relationIndex = indexDifference relationIndex idx
-       , .. }
   ChangeSet{..} <- readTVar transChanges
   writeTVar transChanges
     ChangeSet
