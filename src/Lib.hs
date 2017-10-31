@@ -14,10 +14,11 @@ module Lib
     , connect
     , emptyDb
     , viewDb
-    , viewDbHead
     , getDb
+    , diffDb
     , printDb
     , printView
+    , printChangeSet
     , transaction
     , commit
     , addNode
@@ -94,6 +95,17 @@ headDb db = versionDb db (pred $ versionseq db)
 versionDb :: Db -> Int -> Version
 versionDb Db{..} vid = IntMap.findWithDefault (error "No such version") vid versions
 
+diffDb :: Db -> Int -> Int -> ChangeSet
+diffDb db a b =
+  let va = versionDb db a
+      vb = versionDb db b
+  in  ChangeSet
+      { nodesAdded = IntSet.difference (selectedNodes vb) (selectedNodes va)
+      , nodesDeleted = IntSet.difference (selectedNodes va) (selectedNodes vb)
+      , relationsAdded = IntSet.difference (selectedRelations vb) (selectedRelations va)
+      , relationsDeleted = IntSet.difference (selectedRelations va) (selectedRelations vb)
+      }
+
 data View = View
   { viewNodes     :: IntMap Node      -- ^ map from node id to node
   , viewRelations :: IntMap Relation  -- ^ map from relation id to relation
@@ -111,8 +123,6 @@ viewDb db vid =
     restrictKeys = IntMap.restrictKeys
 -}
 
-viewDbHead :: Db -> View
-viewDbHead db = viewDb db (pred $ versionseq db)
 
 newtype Connection = Connection
   { connDb :: TVar Db
@@ -158,6 +168,17 @@ printView View{..} = do
   putStrLn " ---- Relations ----"
   forM_ (IntMap.toAscList viewRelations) $ \(rid, Relation a b p) ->
     putStrLn $ unwords ["  r" ++ show rid ++ ":", "n" ++ show a ++ " -> n" ++ show b, props p]
+  putStrLn ""
+
+printChangeSet :: ChangeSet -> IO ()
+printChangeSet ChangeSet{..} = do
+  putStrLn "Diff:"
+  putStrLn $ "  Added: " ++
+           unwords ( map (\i -> "n" ++ show i) (IntSet.toList nodesAdded)
+                  ++ map (\i -> "r" ++ show i) (IntSet.toList relationsAdded) )
+  putStrLn $ "  Deleted: " ++
+           unwords ( map (\i -> "n" ++ show i) (IntSet.toList nodesDeleted)
+                  ++ map (\i -> "r" ++ show i) (IntSet.toList relationsDeleted) )
   putStrLn ""
 
 props :: Properties -> String

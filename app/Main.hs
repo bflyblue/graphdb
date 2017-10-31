@@ -33,3 +33,5 @@ main = do
   printView $ viewDb db v1
   printView $ viewDb db v2
   printView $ viewDb db v3
+
+  printChangeSet $ diffDb db v1 v3
