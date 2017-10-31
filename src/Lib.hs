@@ -7,9 +7,15 @@ module Lib
     , Node(..)
     , Relation(..)
     , Properties
+    , Value(..)
+    , properties
     , connect
     , emptyDb
     , viewDb
+    , viewDbHead
+    , getDb
+    , printDb
+    , printView
     , transaction
     , commit
     , addNode
@@ -21,22 +27,36 @@ module Lib
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Data.HashMap.Strict    (HashMap)
+import qualified Data.HashMap.Strict    as HashMap
 import           Data.IntMap.Strict     (IntMap)
 import qualified Data.IntMap.Strict     as IntMap
 import           Data.IntSet            (IntSet)
 import qualified Data.IntSet            as IntSet
+import           Data.List              (sort)
 import           Data.Monoid
 import           Data.Text              (Text)
+import qualified Data.Text              as Text
 
 type Properties = HashMap Field Value
 
+properties :: [(Field, Value)] -> Properties
+properties = HashMap.fromList
+
 type Field = Text
 
-type Value = Text
+data Value
+  = S Text
+  | I Int
+  | B Bool
+  deriving (Show, Eq, Ord)
+
+type PropertyIndexes = HashMap Field Index
+
+type Index = HashMap Value IntSet
 
 --
 
-data Node = Node
+newtype Node = Node
   { nodeProperties :: Properties
   } deriving (Show)
 
@@ -51,16 +71,18 @@ type Id a = Int
 --
 
 data Db = Db
-  { nodes       :: IntMap Node      -- ^ map from node id to node
-  , relations   :: IntMap Relation  -- ^ map from relation id to relation
-  , versions    :: IntMap Version   -- ^ history of the database
-  , nodeseq     :: Int              -- ^ next available node id
-  , relationseq :: Int              -- ^ next available relation id
-  , versionseq  :: Int              -- ^ next available version number
+  { nodes         :: IntMap Node      -- ^ map from node id to node
+  , relations     :: IntMap Relation  -- ^ map from relation id to relation
+  , versions      :: IntMap Version   -- ^ history of the database
+  , nodeIndex     :: PropertyIndexes  -- ^ index for node properties
+  , relationIndex :: PropertyIndexes  -- ^ index for node properties
+  , nodeseq       :: Int              -- ^ next available node id
+  , relationseq   :: Int              -- ^ next available relation id
+  , versionseq    :: Int              -- ^ next available version number
   } deriving (Show)
 
 emptyDb :: Db
-emptyDb = Db mempty mempty (IntMap.singleton 0 emptyVersion) 0 0 1
+emptyDb = Db mempty mempty (IntMap.singleton 0 emptyVersion) mempty mempty 0 0 1
 
 headDb :: Db -> Version
 headDb db = versionDb db (pred $ versionseq db)
@@ -85,9 +107,49 @@ viewDb db vid =
     restrictKeys = IntMap.restrictKeys
 -}
 
-data Connection = Connection
+viewDbHead :: Db -> View
+viewDbHead db = viewDb db (pred $ versionseq db)
+
+newtype Connection = Connection
   { connDb :: TVar Db
   }
+
+getDb :: Connection -> IO Db
+getDb = readTVarIO . connDb
+
+printDb :: Db -> IO ()
+printDb Db{..} = do
+  putStrLn "Database:"
+  putStrLn " ---- Nodes ----"
+  forM_ (IntMap.toAscList nodes) $ \(nid, Node p) ->
+    putStrLn $ unwords ["  n" ++ show nid ++ ":", props p]
+  putStrLn " ---- Relations ----"
+  forM_ (IntMap.toAscList relations) $ \(rid, Relation a b p) ->
+    putStrLn $ unwords ["  r" ++ show rid ++ ":", "n" ++ show a ++ " -> n" ++ show b, props p]
+  putStrLn " ---- Versions ----"
+  forM_ (IntMap.toAscList versions) $ \(vid, Version nodeset relset) ->
+    putStrLn $ "  v" ++ show vid ++ ": " ++
+               unwords ( map (\i -> "n" ++ show i) (IntSet.toList nodeset)
+                      ++ map (\i -> "r" ++ show i) (IntSet.toList relset) )
+
+printView :: View -> IO ()
+printView View{..} = do
+  putStrLn "View:"
+  putStrLn " ---- Nodes ----"
+  forM_ (IntMap.toAscList viewNodes) $ \(nid, Node p) ->
+    putStrLn $ unwords ["  n" ++ show nid ++ ":", props p]
+  putStrLn " ---- Relations ----"
+  forM_ (IntMap.toAscList viewRelations) $ \(rid, Relation a b p) ->
+    putStrLn $ unwords ["  r" ++ show rid ++ ":", "n" ++ show a ++ " -> n" ++ show b, props p]
+
+props :: Properties -> String
+props p =
+  unwords $ ["{"]
+          ++ concatMap pair (sort $ HashMap.toList p)
+          ++ ["}"]
+
+pair :: (Text, Value) -> [String]
+pair (k, v) = [Text.unpack k, "=", show v]
 
 data Transaction = Transaction
   { transConn    :: Connection
@@ -144,7 +206,7 @@ transaction conn act = do
   let t = Transaction { transConn = conn, transChanges = cs }
   atomically $ do
     a <- act t
-    commit t
+    _ <- commit t
     return a
 
 applyChanges :: ChangeSet -> Version -> Version
@@ -154,17 +216,22 @@ applyChanges ChangeSet{..} Version{..} =
   , selectedRelations = (selectedRelations `IntSet.union` relationsAdded) `IntSet.difference` relationsDeleted
   }
 
-commit :: Transaction -> STM ()
+commit :: Transaction -> STM Int
 commit Transaction{..} = do
   changes <- readTVar transChanges
-  unless (nullChangeSet changes) $ do
-    db@Db{..} <- readTVar (connDb transConn)
+  db@Db{..} <- readTVar (connDb transConn)
+  if nullChangeSet changes
+  then
+    return $ pred versionseq
+  else do
     let vid = versionseq
         ver = applyChanges changes (headDb db)
     writeTVar (connDb transConn)
       Db { versions = IntMap.insert vid ver versions
-        , .. }
+         , versionseq = succ versionseq
+         , .. }
     writeTVar transChanges emptyChangeSet
+    return vid
 
 addNode :: Transaction -> Node -> STM (Id Node)
 addNode Transaction{..} n = do
