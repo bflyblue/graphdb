@@ -11,6 +11,7 @@ module Lib
     , Properties
     , Value(..)
     , properties
+    , propertyEq
     , connect
     , emptyDb
     , viewDb
@@ -25,6 +26,8 @@ module Lib
     , addRelation
     , deleteNode
     , deleteRelation
+    , updateNode
+    , updateRelation
     ) where
 
 import           Control.Concurrent.STM
@@ -37,6 +40,7 @@ import qualified Data.IntMap.Strict     as IntMap
 import           Data.IntSet            (IntSet)
 import qualified Data.IntSet            as IntSet
 import           Data.List              (sort, sortOn)
+import           Data.Maybe
 import           Data.Monoid
 import           Data.Text              (Text)
 import qualified Data.Text              as Text
@@ -59,6 +63,11 @@ type PropertyIndexes = HashMap Field Index
 
 type Index = HashMap Value IntSet
 
+propertyEq :: PropertyIndexes -> Field -> Value -> IntSet
+propertyEq pidx f v = fromMaybe IntSet.empty $ do
+  i <- HashMap.lookup f pidx
+  HashMap.lookup v i
+
 --
 
 newtype Node = Node
@@ -76,18 +85,31 @@ type Id a = Int
 --
 
 data Db = Db
-  { nodes         :: IntMap Node      -- ^ map from node id to node
-  , relations     :: IntMap Relation  -- ^ map from relation id to relation
-  , versions      :: IntMap Version   -- ^ history of the database
-  , nodeIndex     :: PropertyIndexes  -- ^ index for node properties
-  , relationIndex :: PropertyIndexes  -- ^ index for node properties
-  , nodeseq       :: Int              -- ^ next available node id
-  , relationseq   :: Int              -- ^ next available relation id
-  , versionseq    :: Int              -- ^ next available version number
+  { nodes          :: IntMap Node      -- ^ map from node id to node
+  , relations      :: IntMap Relation  -- ^ map from relation id to relation
+  , versions       :: IntMap Version   -- ^ history of the database
+  , nodeIndex      :: PropertyIndexes  -- ^ index for node properties
+  , relationIndex  :: PropertyIndexes  -- ^ index for node properties
+  , relationAIndex :: IntMap IntSet   -- ^ index for relations from `a`
+  , relationBIndex :: IntMap IntSet   -- ^ index for relations to `b`
+  , nodeseq        :: Int              -- ^ next available node id
+  , relationseq    :: Int              -- ^ next available relation id
+  , versionseq     :: Int              -- ^ next available version number
   } deriving (Show)
 
 emptyDb :: Db
-emptyDb = Db mempty mempty (IntMap.singleton 0 emptyVersion) mempty mempty 0 0 1
+emptyDb = Db
+          { nodes = mempty
+          , relations = mempty
+          , versions = IntMap.singleton 0 emptyVersion
+          , nodeIndex = mempty
+          , relationIndex = mempty
+          , relationAIndex = mempty
+          , relationBIndex = mempty
+          , nodeseq = 0
+          , relationseq = 0
+          , versionseq = 1
+          }
 
 headDb :: Db -> Version
 headDb db = versionDb db (pred $ versionseq db)
@@ -321,14 +343,16 @@ addNode Transaction{..} n = do
   return nid
 
 addRelation :: Transaction -> Relation -> STM (Id Relation)
-addRelation Transaction{..} r = do
+addRelation Transaction{..} r@Relation{..} = do
   Db{..} <- readTVar (connDb transConn)
   let rid = relationseq
-      idx = indexProperties rid (relationProperties r)
+      idx = indexProperties rid relationProperties
   writeTVar (connDb transConn)
     Db { relations = IntMap.insert rid r relations
        , relationseq = succ relationseq
        , relationIndex = indexUnion relationIndex idx
+       , relationAIndex = IntMap.insertWith IntSet.union nodeA (IntSet.singleton rid) relationAIndex
+       , relationBIndex = IntMap.insertWith IntSet.union nodeB (IntSet.singleton rid) relationBIndex
        , .. }
   ChangeSet{..} <- readTVar transChanges
   writeTVar transChanges
@@ -355,3 +379,26 @@ deleteRelation Transaction{..} rid = do
     { relationsDeleted = IntSet.insert rid relationsDeleted
     , relationsAdded = IntSet.delete rid relationsAdded
     , .. }
+
+updateNode :: Transaction -> Id Node -> Node -> STM (Id Node)
+updateNode t@Transaction{..} nid n = do
+  deleteNode t nid
+  nid' <- addNode t n
+  db@Db{..} <- readTVar (connDb transConn)
+  let ver   = headDb db
+      rfrom = fromMaybe IntSet.empty (IntMap.lookup nid relationAIndex) `IntSet.intersection` selectedRelations ver
+      rto   = fromMaybe IntSet.empty (IntMap.lookup nid relationBIndex) `IntSet.intersection` selectedRelations ver
+  forM_ (IntSet.toList rfrom) $ \rid ->
+    case IntMap.lookup rid relations of
+      Just (Relation _ b prop) -> void $ updateRelation t rid (Relation nid' b prop)
+      Nothing -> return ()  -- error?
+  forM_ (IntSet.toList rto) $ \rid ->
+    case IntMap.lookup rid relations of
+      Just (Relation a _ prop) -> void $ updateRelation t rid (Relation a nid' prop)
+      Nothing -> return ()  -- error?
+  return nid'
+
+updateRelation :: Transaction -> Id Relation -> Relation -> STM (Id Relation)
+updateRelation t rid r = do
+  deleteRelation t rid
+  addRelation t r
