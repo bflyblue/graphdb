@@ -1,8 +1,8 @@
-name:                db-prototype
+name:                graphdb
 version:             0.1.0.0
 -- synopsis:
 -- description:
-homepage:            https://github.com/bflyblue/db-prototype#readme
+homepage:            https://github.com/bflyblue/graphdb#readme
 license:             BSD3
 license-file:        LICENSE
 author:              Shaun Sharples
@@ -24,23 +24,23 @@ library
                      , unordered-containers
   default-language:    Haskell2010
 
-executable db-prototype-exe
+executable graphdb
   hs-source-dirs:      app
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
-                     , db-prototype
+                     , graphdb
   default-language:    Haskell2010
 
-test-suite db-prototype-test
+test-suite graphdb-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       base
-                     , db-prototype
+                     , graphdb
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 
 source-repository head
   type:     git
-  location: https://github.com/bflyblue/db-prototype
+  location: https://github.com/bflyblue/graphdb
